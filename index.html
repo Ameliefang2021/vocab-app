@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>我的单词本</title>
+  <title>我的单词本（GitHub 词库版）</title>
   <style>
     body { font-family: system-ui, -apple-system, Segoe UI, Arial; max-width: 1050px; margin: 24px auto; padding: 0 12px; }
     h2 { margin: 0 0 12px; }
@@ -14,19 +14,25 @@
     table { width: 100%; border-collapse: collapse; margin-top: 14px; }
     th, td { border: 1px solid #ddd; padding: 10px; vertical-align: top; }
     th { background: #f6f6f6; text-align: left; }
-    .small { font-size: 12px; opacity: .8; }
+    .small { font-size: 12px; opacity: .85; }
     .actions button { margin-right: 6px; }
     .col-select { width: 52px; text-align:center; }
     .col-word { width: 160px; }
     .col-cn { width: 220px; }
-    .col-pron { width: 160px; }
+    .col-pron { width: 180px; }
     .col-del { width: 110px; }
     .muted { color:#666; }
+    .badge { display:inline-block; padding:2px 8px; border:1px solid #ddd; border-radius:999px; font-size:12px; }
   </style>
 </head>
 <body>
   <h2>我的单词本</h2>
-  <div class="small muted">导入 CSV 推荐表头：Word,中文意思,Example Sentence（或 word,meaning_cn,example_sentence 也行）</div>
+
+  <div class="small muted">
+    词库来自仓库中的 <span class="badge">vocab.csv</span>（3列推荐表头：<b>Word,中文意思,Example Sentence</b>；也支持：<b>word,meaning_cn,example_sentence</b>）。
+    <br>
+    提示：如果你用电脑本地直接双击打开（file://），浏览器可能会拦截读取 CSV；本地测试请用 <b>python -m http.server 8000</b>。
+  </div>
 
   <div class="row" style="margin-top:12px;">
     <div>
@@ -54,7 +60,9 @@
       <input id="csvFile" type="file" accept=".csv" onchange="importCSV(event)" />
     </label>
 
-    <span class="small muted">提示：发音需要你在页面上先点一次按钮/表格（浏览器的安全限制）。</span>
+    <button onclick="reloadFromGitHub()">重新从 GitHub 读取</button>
+
+    <span class="small muted">发音：需要你先在页面上点一次按钮/表格（浏览器安全限制）。</span>
   </div>
 
   <table id="tbl">
@@ -72,27 +80,115 @@
   </table>
 
 <script>
-  const key = "my_vocab_items_v2_3cols";
-  let items = JSON.parse(localStorage.getItem(key) || "[]");
+  // =========================
+  // Config
+  // =========================
+  const key = "my_vocab_items_v3_github_csv_3cols";
+  let items = [];
 
-  // ---------- Speech ----------
+  // IMPORTANT: repo 里文件名必须是 vocab.csv
+  const CSV_PATH = "./vocab.csv";
+
+  // =========================
+  // Load from GitHub Pages CSV
+  // =========================
+  async function loadFromGitHubCSV() {
+    try {
+      const url = CSV_PATH + "?v=" + Date.now(); // 防缓存
+      const res = await fetch(url, { cache: "no-store" });
+      if (!res.ok) throw new Error("无法读取 vocab.csv（HTTP " + res.status + "）");
+
+      const text = await res.text();
+      const normalized = String(text || "")
+        .replace(/^\uFEFF/, "")
+        .replace(/\r\n/g, "\n")
+        .replace(/\r/g, "\n");
+
+      const lines = normalized.split("\n").filter(x => x.trim().length);
+      if (lines.length === 0) throw new Error("vocab.csv 是空的");
+
+      const rows = lines.map(parseCSVLine);
+
+      // ---- header detection ----
+      const header = rows[0].map(x => String(x || "").trim().toLowerCase());
+      const hasHeader =
+        header.some(h => h.includes("word") || h.includes("单词")) ||
+        header.some(h => h.includes("中文") || h.includes("meaning") || h.includes("释义")) ||
+        header.some(h => h.includes("example") || h === "sentence" || h.includes("例句"));
+
+      const dataRows = hasHeader ? rows.slice(1) : rows;
+
+      // 默认列：Word, 中文意思, Example Sentence
+      let idxWord = 0, idxMeaning = 1, idxSentence = 2;
+
+      if (hasHeader) {
+        const w = header.findIndex(h => h === "word" || h.includes("word") || h.includes("单词"));
+        if (w >= 0) idxWord = w;
+
+        const m = header.findIndex(h => h.includes("中文") || h.includes("meaning") || h.includes("释义"));
+        if (m >= 0) idxMeaning = m;
+
+        const s = header.findIndex(h => h.includes("example") || h === "sentence" || h.includes("例句"));
+        if (s >= 0) idxSentence = s;
+      } else {
+        // 没表头时，根据列数猜（尽量不崩）
+        const colCount = Math.max(...rows.map(r => r.length));
+        if (colCount === 1) { idxWord = 0; idxMeaning = 0; idxSentence = 0; }
+        else if (colCount === 2) { idxWord = 0; idxMeaning = 1; idxSentence = 1; }
+        else { idxWord = 0; idxMeaning = 1; idxSentence = 2; }
+      }
+
+      const parsed = [];
+      for (const r of dataRows) {
+        const word = (r[idxWord] ?? "").trim();
+        const meaning = (r[idxMeaning] ?? "").trim();
+        const sentence = (r[idxSentence] ?? "").trim();
+        if (!word && !meaning && !sentence) continue;
+        parsed.push({ word, meaning, sentence });
+      }
+
+      items = parsed;
+      render();
+
+    } catch (err) {
+      alert(
+        "读取 GitHub 词库失败：\n" +
+        "1) 请确认仓库根目录有 vocab.csv（文件名必须完全一致）\n" +
+        "2) CSV 至少应包含 Word / 中文意思 / Example Sentence 三列\n\n" +
+        "错误信息：" + (err && err.message ? err.message : String(err))
+      );
+
+      // 兜底：如果你本地之前有内容，还能显示
+      items = JSON.parse(localStorage.getItem(key) || "[]");
+      render();
+    }
+  }
+
+  function reloadFromGitHub() {
+    loadFromGitHubCSV();
+  }
+
+  // =========================
+  // Speech
+  // =========================
   function speak(text) {
     if (!text) return;
     const u = new SpeechSynthesisUtterance(text);
-    u.lang = "en-US";     // 你也可以改成 en-CA / en-GB
+    u.lang = "en-US"; // 可改 en-CA / en-GB
     u.rate = 0.95;
     speechSynthesis.cancel();
     speechSynthesis.speak(u);
   }
 
-  // ---------- Render ----------
+  // =========================
+  // Render
+  // =========================
   function render() {
     const tbody = document.querySelector("#tbl tbody");
     tbody.innerHTML = "";
 
     items.forEach((it, idx) => {
       const tr = document.createElement("tr");
-
       tr.innerHTML = `
         <td class="col-select" style="text-align:center;">
           <input type="checkbox" class="rowCheck" data-idx="${idx}">
@@ -111,19 +207,20 @@
       tbody.appendChild(tr);
     });
 
+    // 本地缓存（只是兜底，不作为“多设备同步”的来源）
     localStorage.setItem(key, JSON.stringify(items));
 
-    // 渲染后取消“全选”
     const checkAll = document.getElementById("checkAll");
     if (checkAll) checkAll.checked = false;
   }
 
-  // ---------- CRUD ----------
+  // =========================
+  // CRUD
+  // =========================
   function addItem() {
     const word = document.getElementById("word").value.trim();
     const meaning = document.getElementById("meaning").value.trim();
     const sentence = document.getElementById("sentence").value.trim();
-
     if (!word && !meaning && !sentence) return;
 
     items.unshift({ word, meaning, sentence });
@@ -155,18 +252,19 @@
       return;
     }
 
-    // 从大到小删，避免索引变化
     checked.sort((a,b) => b-a).forEach(i => items.splice(i, 1));
     render();
   }
 
   function clearAll() {
-    if (!confirm("确定要清空全部单词吗？这会删除本地保存的所有内容。")) return;
+    if (!confirm("确定要清空全部单词吗？（这会清空当前页面与本地缓存；GitHub 上的 vocab.csv 不会自动改变）")) return;
     items = [];
     render();
   }
 
-  // ---------- Export CSV (3 cols) ----------
+  // =========================
+  // Export CSV (3 cols)
+  // =========================
   function exportCSV() {
     const rows = [
       ["Word","中文意思","Example Sentence"],
@@ -180,11 +278,13 @@
     const blob = new Blob([csv], {type:"text/csv;charset=utf-8"});
     const a = document.createElement("a");
     a.href = URL.createObjectURL(blob);
-    a.download = "vocabulary_list_3cols.csv";
+    a.download = "vocab.csv"; // ✅ 建议直接导出为 vocab.csv，方便你覆盖仓库同名文件
     a.click();
   }
 
-  // ---------- Import CSV (3 cols) ----------
+  // =========================
+  // Import CSV (3 cols)
+  // =========================
   function importCSV(e) {
     const f = e.target.files[0];
     if (!f) return;
@@ -211,31 +311,26 @@
 
       const rows = lines.map(parseCSVLine);
 
-      // ---- header detection ----
       const header = rows[0].map(x => String(x || "").trim().toLowerCase());
-      const hasHeader = header.includes("word") || header.includes("中文意思") || header.includes("example sentence")
-                        || header.includes("meaning") || header.includes("sentence");
+      const hasHeader =
+        header.some(h => h.includes("word") || h.includes("单词")) ||
+        header.some(h => h.includes("中文") || h.includes("meaning") || h.includes("释义")) ||
+        header.some(h => h.includes("example") || h === "sentence" || h.includes("例句"));
 
       const dataRows = hasHeader ? rows.slice(1) : rows;
 
-      // ---- column mapping ----
-      // 默认按你这种：Word / 中文意思 / Example Sentence
       let idxWord = 0, idxMeaning = 1, idxSentence = 2;
 
       if (hasHeader) {
-        // word
         const w = header.findIndex(h => h === "word" || h.includes("word") || h.includes("单词"));
         if (w >= 0) idxWord = w;
 
-        // meaning cn
         const m = header.findIndex(h => h.includes("中文") || h.includes("meaning") || h.includes("释义"));
         if (m >= 0) idxMeaning = m;
 
-        // example sentence
-        const s = header.findIndex(h => h.includes("example sentence") || h === "sentence" || h.includes("例句"));
+        const s = header.findIndex(h => h.includes("example") || h === "sentence" || h.includes("例句"));
         if (s >= 0) idxSentence = s;
       } else {
-        // 没表头：按列数猜
         const colCount = Math.max(...rows.map(r => r.length));
         if (colCount === 1) { idxWord = 0; idxMeaning = 0; idxSentence = 0; }
         else if (colCount === 2) { idxWord = 0; idxMeaning = 1; idxSentence = 1; }
@@ -252,12 +347,11 @@
       }
 
       if (newItems.length === 0) {
-        alert("没有解析到任何内容。请检查 CSV 是否是 3 列。");
+        alert("没有解析到任何内容。请检查 CSV 是否包含 Word / 中文意思 / Example Sentence 三列。");
         e.target.value = "";
         return;
       }
 
-      // 导入策略：追加到最前面（不覆盖原有）
       items = newItems.concat(items);
       render();
 
@@ -268,7 +362,9 @@
     reader.readAsText(f, "utf-8");
   }
 
-  // ---------- Minimal CSV parser ----------
+  // =========================
+  // Utils
+  // =========================
   function parseCSVLine(line){
     const out = [];
     let cur = "", inQ = false;
@@ -297,7 +393,8 @@
       .replaceAll("\n"," ");
   }
 
-  render();
+  // Start
+  loadFromGitHubCSV();
 </script>
 </body>
 </html>
