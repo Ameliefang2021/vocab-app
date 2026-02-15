@@ -1,0 +1,303 @@
+<!doctype html>
+<html lang="zh">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>我的单词本</title>
+  <style>
+    body { font-family: system-ui, -apple-system, Segoe UI, Arial; max-width: 1050px; margin: 24px auto; padding: 0 12px; }
+    h2 { margin: 0 0 12px; }
+    .row { display: grid; grid-template-columns: 1fr 1fr 2fr; gap: 10px; }
+    input { width: 100%; padding: 8px; box-sizing: border-box; }
+    .controls { display:flex; gap:10px; flex-wrap:wrap; margin-top:10px; align-items:center; }
+    button { padding: 7px 12px; cursor: pointer; }
+    table { width: 100%; border-collapse: collapse; margin-top: 14px; }
+    th, td { border: 1px solid #ddd; padding: 10px; vertical-align: top; }
+    th { background: #f6f6f6; text-align: left; }
+    .small { font-size: 12px; opacity: .8; }
+    .actions button { margin-right: 6px; }
+    .col-select { width: 52px; text-align:center; }
+    .col-word { width: 160px; }
+    .col-cn { width: 220px; }
+    .col-pron { width: 160px; }
+    .col-del { width: 110px; }
+    .muted { color:#666; }
+  </style>
+</head>
+<body>
+  <h2>我的单词本</h2>
+  <div class="small muted">导入 CSV 推荐表头：Word,中文意思,Example Sentence（或 word,meaning_cn,example_sentence 也行）</div>
+
+  <div class="row" style="margin-top:12px;">
+    <div>
+      <label>Word</label>
+      <input id="word" placeholder="e.g., resilient" />
+    </div>
+    <div>
+      <label>中文意思</label>
+      <input id="meaning" placeholder="例如：有韧性的；坚韧的" />
+    </div>
+    <div>
+      <label>Example Sentence</label>
+      <input id="sentence" placeholder="e.g., She is resilient in the face of challenges." />
+    </div>
+  </div>
+
+  <div class="controls">
+    <button onclick="addItem()">添加</button>
+    <button onclick="deleteSelected()">删除选中</button>
+    <button onclick="clearAll()" title="清空全部（慎点）">清空全部</button>
+    <button onclick="exportCSV()">导出 CSV</button>
+
+    <label style="display:inline-block;">
+      导入 CSV：
+      <input id="csvFile" type="file" accept=".csv" onchange="importCSV(event)" />
+    </label>
+
+    <span class="small muted">提示：发音需要你在页面上先点一次按钮/表格（浏览器的安全限制）。</span>
+  </div>
+
+  <table id="tbl">
+    <thead>
+      <tr>
+        <th class="col-select"><input type="checkbox" id="checkAll" onchange="toggleAll(event)"></th>
+        <th class="col-word">Word</th>
+        <th class="col-cn">中文意思</th>
+        <th>Example Sentence</th>
+        <th class="col-pron">发音</th>
+        <th class="col-del">单行删除</th>
+      </tr>
+    </thead>
+    <tbody></tbody>
+  </table>
+
+<script>
+  const key = "my_vocab_items_v2_3cols";
+  let items = JSON.parse(localStorage.getItem(key) || "[]");
+
+  // ---------- Speech ----------
+  function speak(text) {
+    if (!text) return;
+    const u = new SpeechSynthesisUtterance(text);
+    u.lang = "en-US";     // 你也可以改成 en-CA / en-GB
+    u.rate = 0.95;
+    speechSynthesis.cancel();
+    speechSynthesis.speak(u);
+  }
+
+  // ---------- Render ----------
+  function render() {
+    const tbody = document.querySelector("#tbl tbody");
+    tbody.innerHTML = "";
+
+    items.forEach((it, idx) => {
+      const tr = document.createElement("tr");
+
+      tr.innerHTML = `
+        <td class="col-select" style="text-align:center;">
+          <input type="checkbox" class="rowCheck" data-idx="${idx}">
+        </td>
+        <td class="col-word">${escapeHtml(it.word)}</td>
+        <td class="col-cn">${escapeHtml(it.meaning)}</td>
+        <td>${escapeHtml(it.sentence)}</td>
+        <td class="actions">
+          <button onclick="speak('${escapeJs(it.word)}')">读单词</button>
+          <button onclick="speak('${escapeJs(it.sentence)}')">读句子</button>
+        </td>
+        <td>
+          <button onclick="delItem(${idx})">删除</button>
+        </td>
+      `;
+      tbody.appendChild(tr);
+    });
+
+    localStorage.setItem(key, JSON.stringify(items));
+
+    // 渲染后取消“全选”
+    const checkAll = document.getElementById("checkAll");
+    if (checkAll) checkAll.checked = false;
+  }
+
+  // ---------- CRUD ----------
+  function addItem() {
+    const word = document.getElementById("word").value.trim();
+    const meaning = document.getElementById("meaning").value.trim();
+    const sentence = document.getElementById("sentence").value.trim();
+
+    if (!word && !meaning && !sentence) return;
+
+    items.unshift({ word, meaning, sentence });
+
+    document.getElementById("word").value = "";
+    document.getElementById("meaning").value = "";
+    document.getElementById("sentence").value = "";
+
+    render();
+  }
+
+  function delItem(i) {
+    items.splice(i, 1);
+    render();
+  }
+
+  function toggleAll(e) {
+    const checked = e.target.checked;
+    document.querySelectorAll(".rowCheck").forEach(cb => cb.checked = checked);
+  }
+
+  function deleteSelected() {
+    const checked = Array.from(document.querySelectorAll(".rowCheck"))
+      .filter(cb => cb.checked)
+      .map(cb => Number(cb.dataset.idx));
+
+    if (checked.length === 0) {
+      alert("你还没勾选任何行。");
+      return;
+    }
+
+    // 从大到小删，避免索引变化
+    checked.sort((a,b) => b-a).forEach(i => items.splice(i, 1));
+    render();
+  }
+
+  function clearAll() {
+    if (!confirm("确定要清空全部单词吗？这会删除本地保存的所有内容。")) return;
+    items = [];
+    render();
+  }
+
+  // ---------- Export CSV (3 cols) ----------
+  function exportCSV() {
+    const rows = [
+      ["Word","中文意思","Example Sentence"],
+      ...items.map(x => [x.word, x.meaning, x.sentence])
+    ];
+
+    const csv = rows
+      .map(r => r.map(cell => `"${String(cell ?? "").replaceAll('"','""')}"`).join(","))
+      .join("\n");
+
+    const blob = new Blob([csv], {type:"text/csv;charset=utf-8"});
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = "vocabulary_list_3cols.csv";
+    a.click();
+  }
+
+  // ---------- Import CSV (3 cols) ----------
+  function importCSV(e) {
+    const f = e.target.files[0];
+    if (!f) return;
+
+    const nameOk = f.name.toLowerCase().endsWith(".csv");
+    const typeOk = (f.type === "" || f.type.includes("csv"));
+    if (!nameOk || !typeOk) {
+      alert("你选择的不是 CSV 文件。请在 Excel 里：另存为 → CSV UTF-8（.csv）后再导入。");
+      e.target.value = "";
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.onload = () => {
+      let text = String(reader.result || "");
+      text = text.replace(/^\uFEFF/, "").replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+
+      const lines = text.split("\n").map(x => x.trim()).filter(Boolean);
+      if (lines.length === 0) {
+        alert("CSV 是空的。");
+        e.target.value = "";
+        return;
+      }
+
+      const rows = lines.map(parseCSVLine);
+
+      // ---- header detection ----
+      const header = rows[0].map(x => String(x || "").trim().toLowerCase());
+      const hasHeader = header.includes("word") || header.includes("中文意思") || header.includes("example sentence")
+                        || header.includes("meaning") || header.includes("sentence");
+
+      const dataRows = hasHeader ? rows.slice(1) : rows;
+
+      // ---- column mapping ----
+      // 默认按你这种：Word / 中文意思 / Example Sentence
+      let idxWord = 0, idxMeaning = 1, idxSentence = 2;
+
+      if (hasHeader) {
+        // word
+        const w = header.findIndex(h => h === "word" || h.includes("word") || h.includes("单词"));
+        if (w >= 0) idxWord = w;
+
+        // meaning cn
+        const m = header.findIndex(h => h.includes("中文") || h.includes("meaning") || h.includes("释义"));
+        if (m >= 0) idxMeaning = m;
+
+        // example sentence
+        const s = header.findIndex(h => h.includes("example sentence") || h === "sentence" || h.includes("例句"));
+        if (s >= 0) idxSentence = s;
+      } else {
+        // 没表头：按列数猜
+        const colCount = Math.max(...rows.map(r => r.length));
+        if (colCount === 1) { idxWord = 0; idxMeaning = 0; idxSentence = 0; }
+        else if (colCount === 2) { idxWord = 0; idxMeaning = 1; idxSentence = 1; }
+        else { idxWord = 0; idxMeaning = 1; idxSentence = 2; }
+      }
+
+      const newItems = [];
+      for (const r of dataRows) {
+        const word = (r[idxWord] ?? "").trim();
+        const meaning = (r[idxMeaning] ?? "").trim();
+        const sentence = (r[idxSentence] ?? "").trim();
+        if (!word && !meaning && !sentence) continue;
+        newItems.push({ word, meaning, sentence });
+      }
+
+      if (newItems.length === 0) {
+        alert("没有解析到任何内容。请检查 CSV 是否是 3 列。");
+        e.target.value = "";
+        return;
+      }
+
+      // 导入策略：追加到最前面（不覆盖原有）
+      items = newItems.concat(items);
+      render();
+
+      alert(`导入成功：${newItems.length} 条`);
+      e.target.value = "";
+    };
+
+    reader.readAsText(f, "utf-8");
+  }
+
+  // ---------- Minimal CSV parser ----------
+  function parseCSVLine(line){
+    const out = [];
+    let cur = "", inQ = false;
+    for (let i=0; i<line.length; i++){
+      const ch = line[i];
+      if (ch === '"' && line[i+1] === '"') { cur += '"'; i++; continue; }
+      if (ch === '"') { inQ = !inQ; continue; }
+      if (ch === "," && !inQ) { out.push(cur); cur=""; continue; }
+      cur += ch;
+    }
+    out.push(cur);
+    return out;
+  }
+
+  function escapeHtml(s){
+    return String(s ?? "")
+      .replaceAll("&","&amp;")
+      .replaceAll("<","&lt;")
+      .replaceAll(">","&gt;");
+  }
+
+  function escapeJs(s){
+    return String(s ?? "")
+      .replaceAll("\\","\\\\")
+      .replaceAll("'","\\'")
+      .replaceAll("\n"," ");
+  }
+
+  render();
+</script>
+</body>
+</html>
