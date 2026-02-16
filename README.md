@@ -12,6 +12,14 @@ python -m http.server 8000
 
 
 
+本地测试打开方式：
+在你的项目文件夹打开 Git Bash，运行：
+
+python -m http.server 8000
+
+
+然后浏览器打开：
+
 http://localhost:8000/
 
 当你在网页里添加新单词后：
