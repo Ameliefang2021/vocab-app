@@ -20,7 +20,7 @@ python -m http.server 8000
 
 然后浏览器打开：
 
-http://localhost:8000/
+[http://localhost:8000/](https://ameliefang2021.github.io/vocab-app/)
 
 当你在网页里添加新单词后：
 
